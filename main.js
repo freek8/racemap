@@ -7,10 +7,16 @@ import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
 
+// -------------------------------------------
+// SETTINGS
+// -------------------------------------------
 const API_KEY = "84I0brm1Nz3hhuwn2JP4";
-const Z = 16;
-const start = [6.5665, 53.2194];
+const Z = 16;      // vector road zoom
+const start = [6.5665, 53.2194]; // Groningen center
 
+// -------------------------------------------
+// MAP INITIALIZATION
+// -------------------------------------------
 const map = new maplibregl.Map({
     container: "map",
     style: {
@@ -21,7 +27,8 @@ const map = new maplibregl.Map({
                 tiles: [
                     `https://api.maptiler.com/maps/hybrid/256/{z}/{x}/{y}.jpg?key=${API_KEY}`
                 ],
-                tileSize: 256
+                tileSize: 256,
+                maxzoom: 20
             },
             terrain: {
                 type: "raster-dem",
@@ -44,7 +51,17 @@ const map = new maplibregl.Map({
     antialias: true
 });
 
+map.touchPitch.enable();
+map.touchZoomRotate.enable();
+
+// -------------------------------------------
+// TERRAIN SMOOTHER
+// -------------------------------------------
 const terrainHelper = new TerrainHelper(map);
+
+// -------------------------------------------
+// ROAD LOADING
+// -------------------------------------------
 const snapper = new RoadSnapper();
 
 async function loadRoadsAround(lon, lat) {
@@ -60,36 +77,58 @@ async function loadRoadsAround(lon, lat) {
     }
 
     const all = [];
+
     for (let t of needed) {
         const url = tileURL(
             `https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=${API_KEY}`,
             Z, t.x, t.y
         );
+
         const tile = await loadVectorTile(url);
         if (!tile) continue;
+
         const roads = extractRoads(tile);
         all.push(...roads);
     }
+
     snapper.setRoads(all);
 }
 
+// -------------------------------------------
+// THREE.JS LAYER + CAR + CAMERA
+// -------------------------------------------
 let threeLayer;
 let car;
 let camController;
 
-map.on("load", async () => {
-    await loadRoadsAround(start[0], start[1]);
-    threeLayer = new ThreeTerrainLayer("car.glb", (carModel) => {
-        car = new CarController(carModel, start, map, snapper);
-        camController = new CameraController(threeLayer, car);
-    });
-    map.addLayer(threeLayer);
-    gameLoop();
+// IMPORTANT: Must wait for FULL MAP INIT
+map.on("idle", async () => {
+
+    if (!threeLayer) {
+        console.log("Map idle → initializing 3D layer");
+
+        await loadRoadsAround(start[0], start[1]);
+
+        // Load car.glb from the ROOT directory
+        threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
+            console.log("Car model loaded");
+            car = new CarController(carModel, start, map, snapper);
+            camController = new CameraController(threeLayer, car);
+        });
+
+        map.addLayer(threeLayer);
+        gameLoop();
+    }
 });
 
+// -------------------------------------------
+// GAME LOOP
+// -------------------------------------------
 function gameLoop() {
     requestAnimationFrame(gameLoop);
+
     if (!car) return;
+
     car.update();
     camController.update();
 }
