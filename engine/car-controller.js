@@ -1,89 +1,192 @@
 // Car movement, road snapping, terrain following
-import { lonLatToMerc, normalizePointInTile, normalizedToLonLat } from './coordinate-utils.js';
+// Patched for FREE OpenMapTiles / MapLibre demo tiles
+// Safe against NaN, missing roads, terrain gaps, and OOB
 
-export class CarController{
- constructor(model,startLonLat,map,roadSnapper){
-  this.obj=model;
-  this.map=map;
-  this.snapper=roadSnapper;
+import {
+    lonLatToMerc,
+    lonLatToTile,
+    normalizePointInTile,
+    normalizedToLonLat
+} from "./coordinate-utils.js";
 
-  this.lon=startLonLat[0];
-  this.lat=startLonLat[1];
+export class CarController {
+    constructor(model, startLonLat, map, roadSnapper) {
+        this.obj = model;
+        this.map = map;
+        this.snapper = roadSnapper;
 
-  const m=lonLatToMerc(this.lon,this.lat);
-  this.x=m.x; this.y=m.y; this.z=0;
+        // Starting position
+        this.lon = startLonLat[0];
+        this.lat = startLonLat[1];
 
-  this.dir=0;
-  this.speed=0;
+        const m = lonLatToMerc(this.lon, this.lat);
+        this.x = m.x;
+        this.y = m.y;
+        this.z = 0;
 
-  this.keys={};
-  window.addEventListener('keydown',e=>this.keys[e.key.toLowerCase()]=true);
-  window.addEventListener('keyup',e=>this.keys[e.key.toLowerCase()]=false);
+        // Movement state
+        this.dir = 0;
+        this.speed = 0;
 
-  this.scaled=false;
-  this.tileZ=16;
- }
+        // Safe tile zoom (free vector tiles support up to ~z14)
+        this.tileZ = 14;
 
- update(){
-  this.handleInput();
-  this.applyMovement();
-  this.snapToRoad();
-  this.sampleTerrain();
-  this.updateModel();
- }
+        // Input
+        this.keys = {};
+        window.addEventListener("keydown", e => this.keys[e.key.toLowerCase()] = true);
+        window.addEventListener("keyup", e => this.keys[e.key.toLowerCase()] = false);
 
- handleInput(){
-  if(this.keys['w']) this.speed=35;
-  else if(this.keys['s']) this.speed=-20;
-  else this.speed=0;
+        this.scaled = false;
 
-  if(this.keys['a']) this.dir+=0.04;
-  if(this.keys['d']) this.dir-=0.04;
- }
+        // Store last valid coordinates to prevent invalid jumps
+        this.lastLon = this.lon;
+        this.lastLat = this.lat;
+    }
 
- applyMovement(){
-  const dx=Math.cos(this.dir)*this.speed;
-  const dy=Math.sin(this.dir)*this.speed;
+    update() {
+        if (!this.snapper.roads.length) {
+            // Roads not loaded yet → keep car still
+            return;
+        }
 
-  this.x+=dx; this.y+=dy;
+        this.handleInput();
+        this.applyMovement();
+        this.safeSnap();
+        this.sampleTerrain();
+        this.updateModel();
+    }
 
-  const p1=this.map.project([this.lon,this.lat]);
-  const p2={x:p1.x+dx,y:p1.y+dy};
-  const ll=this.map.unproject([p2.x,p2.y]);
-  this.lon=ll.lng; this.lat=ll.lat;
- }
+    // ----------------------------
+    // Movement input
+    // ----------------------------
+    handleInput() {
+        if (this.keys["w"]) this.speed = 22;
+        else if (this.keys["s"]) this.speed = -12;
+        else this.speed = 0;
 
- snapToRoad(){
-  const t=normalizePointInTile(this.lon,this.lat,this.tileZ);
-  const s=this.snapper.snapPosition(t.nx,t.ny);
-  const ll=normalizedToLonLat(t.tx,t.ty,s.x,s.y,this.tileZ);
-  this.lon=ll.lon; this.lat=ll.lat;
+        if (this.keys["a"]) this.dir += 0.04;
+        if (this.keys["d"]) this.dir -= 0.04;
+    }
 
-  const m=lonLatToMerc(this.lon,this.lat);
-  this.x=m.x; this.y=m.y;
+    // ----------------------------
+    // Apply forward/backward movement
+    // ----------------------------
+    applyMovement() {
+        const dx = Math.cos(this.dir) * this.speed;
+        const dy = Math.sin(this.dir) * this.speed;
 
-  this.dir=Math.atan2(s.dir.y,s.dir.x);
- }
+        // Move mercator coordinates
+        this.x += dx;
+        this.y += dy;
 
- sampleTerrain(){
-  const h=this.map.queryTerrainElevation([this.lon,this.lat]);
-  this.z=h||0;
- }
+        // Convert using map to stay consistent
+        const p = this.map.project([this.lon, this.lat]);
+        const p2 = { x: p.x + dx, y: p.y + dy };
+        const ll = this.map.unproject([p2.x, p2.y]);
 
- updateModel(){
-  this.obj.position.set(this.x,this.y,this.z);
-  this.obj.rotation.z=-this.dir;
+        if (!isFinite(ll.lng) || !isFinite(ll.lat)) {
+            console.warn("Invalid move → restoring last known position");
+            return;
+        }
 
-  if(!this.scaled){
-   const box=new THREE.Box3().setFromObject(this.obj);
-   const size=new THREE.Vector3(); box.getSize(size);
-   const scale=4/Math.max(size.x,size.y,size.z);
-   this.obj.scale.set(scale,scale,scale);
-   this.scaled=true;
-  }
- }
+        this.lon = ll.lng;
+        this.lat = ll.lat;
 
- getChaseTarget(){
-  return {position:this.obj.position,rotation:this.obj.rotation};
- }
+        this.lastLon = this.lon;
+        this.lastLat = this.lat;
+    }
+
+    // ----------------------------
+    // SAFE snapping to nearest road
+    // ----------------------------
+    safeSnap() {
+        const tilePos = normalizePointInTile(this.lon, this.lat, this.tileZ);
+
+        const snapped = this.snapper.snapPosition(tilePos.nx, tilePos.ny);
+
+        if (!snapped
+            || !isFinite(snapped.x)
+            || !isFinite(snapped.y)
+            || !isFinite(snapped.dir.x)
+            || !isFinite(snapped.dir.y)) {
+
+            console.warn("Snapping failed → keeping last position");
+            this.lon = this.lastLon;
+            this.lat = this.lastLat;
+            return;
+        }
+
+        const ll = normalizedToLonLat(
+            tilePos.tx,
+            tilePos.ty,
+            snapped.x,
+            snapped.y,
+            this.tileZ
+        );
+
+        if (!isFinite(ll.lon) || !isFinite(ll.lat)) {
+            console.warn("Snapped lon/lat invalid → restoring last valid");
+            this.lon = this.lastLon;
+            this.lat = this.lastLat;
+            return;
+        }
+
+        // Update lon/lat
+        this.lon = ll.lon;
+        this.lat = ll.lat;
+
+        const m = lonLatToMerc(this.lon, this.lat);
+
+        if (!isFinite(m.x) || !isFinite(m.y)) {
+            console.warn("Mercator conversion invalid → roll back");
+            this.lon = this.lastLon;
+            this.lat = this.lastLat;
+            return;
+        }
+
+        // Save last valid
+        this.lastLon = this.lon;
+        this.lastLat = this.lat;
+
+        this.x = m.x;
+        this.y = m.y;
+
+        // Update direction
+        this.dir = Math.atan2(snapped.dir.y, snapped.dir.x);
+    }
+
+    // ----------------------------
+    // Terrain elevation sampling
+    // ----------------------------
+    sampleTerrain() {
+        const h = this.map.queryTerrainElevation([this.lon, this.lat]);
+        this.z = isFinite(h) ? h : 0;
+    }
+
+    // ----------------------------
+    // Update Three.js model transform
+    // ----------------------------
+    updateModel() {
+        this.obj.position.set(this.x, this.y, this.z);
+        this.obj.rotation.z = -this.dir;
+
+        // Auto-scale the car model to ~4m long
+        if (!this.scaled) {
+            const box = new THREE.Box3().setFromObject(this.obj);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+
+            const scale = 4 / Math.max(size.x, size.y, size.z);
+            this.obj.scale.set(scale, scale, scale);
+
+            this.scaled = true;
+        }
+    }
+
+    getChaseTarget() {
+        return {
+            position: this.obj.position,
+            rotation: this.obj.rotation
+        };
+    }
 }
