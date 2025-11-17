@@ -10,43 +10,47 @@ import { TerrainHelper } from "./engine/terrain.js";
 // -------------------------------------------
 // SETTINGS
 // -------------------------------------------
-const API_KEY = "84I0brm1Nz3hhuwn2JP4";
-const Z = 16;      // vector road zoom
-const start = [6.5665, 53.2194]; // Groningen center
+
+// FREE TILE ZOOM LIMITS:
+// • Vector (roads): up to Z=14 reliably
+// • Terrain: also Z=14
+// • Raster: unlimited
+const Z = 14;
+const start = [6.5665, 53.2194]; // Groningen
 
 // -------------------------------------------
-// MAP INITIALIZATION
+// MAP INITIALIZATION (FREE, NO API KEY)
 // -------------------------------------------
 const map = new maplibregl.Map({
     container: "map",
     style: {
         version: 8,
         sources: {
-            sat: {
+            raster: {
                 type: "raster",
                 tiles: [
-                    `https://api.maptiler.com/maps/hybrid/256/{z}/{x}/{y}.jpg?key=${API_KEY}`
+                    "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
                 ],
                 tileSize: 256,
-                maxzoom: 20
+                maxzoom: 19
             },
             terrain: {
                 type: "raster-dem",
                 tiles: [
-                    `https://api.maptiler.com/tiles/terrain-rgb-v2/{z}/{x}/{y}.png?key=${API_KEY}`
+                    "https://demotiles.maplibre.org/terrain-tiles/{z}/{x}/{y}.png"
                 ],
                 tileSize: 256,
                 maxzoom: 14
             }
         },
         layers: [
-            { id: "sat-layer", type: "raster", source: "sat" }
+            { id: "osm-layer", type: "raster", source: "raster" }
         ],
         terrain: { source: "terrain", exaggeration: 1.0 }
     },
     center: start,
-    zoom: 16,
-    pitch: 58,
+    zoom: 15,
+    pitch: 60,
     bearing: 0,
     antialias: true
 });
@@ -60,7 +64,7 @@ map.touchZoomRotate.enable();
 const terrainHelper = new TerrainHelper(map);
 
 // -------------------------------------------
-// ROAD LOADING
+// ROAD LOADING (FREE VECTOR TILES)
 // -------------------------------------------
 const snapper = new RoadSnapper();
 
@@ -69,28 +73,25 @@ async function loadRoadsAround(lon, lat) {
     const tx = Math.floor(t.x);
     const ty = Math.floor(t.y);
 
-    const needed = [];
+    const all = [];
+
     for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
-            needed.push({ x: tx + dx, y: ty + dy });
+
+            const url = tileURL(
+                "https://demotiles.maplibre.org/tiles/{z}/{x}/{y}.pbf",
+                Z, tx + dx, ty + dy
+            );
+
+            const tile = await loadVectorTile(url);
+            if (!tile) continue;
+
+            const roads = extractRoads(tile);
+            all.push(...roads);
         }
     }
 
-    const all = [];
-
-    for (let t of needed) {
-        const url = tileURL(
-            `https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf?key=${API_KEY}`,
-            Z, t.x, t.y
-        );
-
-        const tile = await loadVectorTile(url);
-        if (!tile) continue;
-
-        const roads = extractRoads(tile);
-        all.push(...roads);
-    }
-
+    console.log("Loaded roads:", all.length);
     snapper.setRoads(all);
 }
 
@@ -101,17 +102,18 @@ let threeLayer;
 let car;
 let camController;
 
-// IMPORTANT: Must wait for FULL MAP INIT
+// Use `idle` to wait for full initialization
 map.on("idle", async () => {
-
     if (!threeLayer) {
         console.log("Map idle → initializing 3D layer");
 
+        // Load free road data
         await loadRoadsAround(start[0], start[1]);
 
-        // Load car.glb from the ROOT directory
+        // Load 3D car model
         threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
             console.log("Car model loaded");
+
             car = new CarController(carModel, start, map, snapper);
             camController = new CameraController(threeLayer, car);
         });
@@ -127,7 +129,7 @@ map.on("idle", async () => {
 function gameLoop() {
     requestAnimationFrame(gameLoop);
 
-    if (!car) return;
+    if (!car || snapper.roads.length === 0) return;
 
     car.update();
     camController.update();
