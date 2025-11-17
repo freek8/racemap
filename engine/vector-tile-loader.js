@@ -1,72 +1,244 @@
-// Minimal PBF / Mapbox Vector Tile decoder
-export async function loadVectorTile(url){
- const r=await fetch(url); if(!r.ok) return null;
- const b=new Uint8Array(await r.arrayBuffer());
- return decodeMVT(b);
+// Minimal PBF / MapLibre demo vector tile decoder
+// Patched for OpenMapTiles/MapLibre demo schema (free, no API key)
+
+// Loads a vector tile from URL
+export async function loadVectorTile(url) {
+    try {
+        const res = await fetch(url);
+        if (!res.ok) {
+            console.warn("Vector tile failed:", res.status, url);
+            return null;
+        }
+
+        const buf = new Uint8Array(await res.arrayBuffer());
+        return decodeMVT(buf);
+
+    } catch (e) {
+        console.error("Vector tile load error:", e);
+        return null;
+    }
 }
 
-function decodeMVT(buf){
- const p=new Pbf(buf);
- const t=p.readFields(readTile,{layers:{}});
- Object.keys(t.layers).forEach(k=>{
-  const l=t.layers[k];
-  l.features=l.features.map(f=>vectorTileFeatureToGeoJSON(f,l));
- });
- return t;
+// ---------------------------------------
+// Decode MVT (Mapbox Vector Tile) using PBF
+// ---------------------------------------
+function decodeMVT(buffer) {
+    const pbf = new Pbf(buffer);
+    const tile = pbf.readFields(readTile, { layers: {} });
+
+    // Each layer must have: name, keys[], values[], features[]
+    for (const name in tile.layers) {
+        const layer = tile.layers[name];
+
+        // Normalize schema (important for demo tiles)
+        layer.keys = layer.keys || [];
+        layer.values = layer.values || [];
+        layer.features = layer.features || [];
+        layer.extent = layer.extent || 4096;
+
+        // Convert MVT geometries into GeoJSON-like arrays
+        layer.features = layer.features.map(f =>
+            mvtFeatureToGeoJSON(f, layer)
+        );
+    }
+
+    return tile;
 }
 
-function readTile(tag,t,p){ if(tag===3){ const l=p.readMessage(readLayer,{features:[]}); t.layers[l.name]=l; } }
-function readLayer(tag,l,p){
- if(tag===1) l.name=p.readString();
- else if(tag===2) l.features.push(p.readMessage(readFeature,{tags:{}}));
- else if(tag===3) l.keys=p.readString();
- else if(tag===4) l.values=readValue(p);
- else if(tag===5) l.extent=p.readVarint();
+// ---------------------------------------
+// Tile structure reader
+// ---------------------------------------
+function readTile(tag, tile, pbf) {
+    if (tag === 3) {
+        const layer = pbf.readMessage(readLayer, {
+            features: [],
+            keys: [],
+            values: []
+        });
+        tile.layers[layer.name] = layer;
+    }
 }
 
-function readValue(p){ const v={}; const e=p.readVarint()+p.pos;
- while(p.pos<e){ const t=p.readVarint()>>3;
-  if(t===1) v.string=p.readString();
-  else if(t===2) v.float=p.readFloat();
-  else if(t===3) v.double=p.readDouble();
-  else if(t===4) v.int=p.readVarint();
-  else if(t===5) v.uint=p.readVarint();
-  else if(t===6) v.sint=p.readSVarint();
-  else if(t===7) v.bool=!!p.readVarint(); }
- return v; }
-
-function readFeature(tag,f,p){
- if(tag===1) f.id=p.readVarint();
- else if(tag===2) f.tags=readTags(f.tags||{},p);
- else if(tag===3) f.type=p.readVarint();
- else if(tag===4) f.geometry=readGeometry(p);
+function readLayer(tag, layer, pbf) {
+    if (tag === 1) layer.name = pbf.readString();
+    else if (tag === 2) layer.features.push(
+        pbf.readMessage(readFeature, { tags: {} })
+    );
+    else if (tag === 3) layer.keys.push(pbf.readString());
+    else if (tag === 4) layer.values.push(readValue(pbf));
+    else if (tag === 5) layer.extent = pbf.readVarint();
 }
 
-function readTags(t,p){ const e=p.readVarint()+p.pos;
- while(p.pos<e){ const k=p.readVarint(); const v=p.readVarint(); t[k]=v; }
- return t; }
+function readValue(pbf) {
+    const val = {};
+    const end = pbf.readVarint() + pbf.pos;
 
-function readGeometry(p){ const e=p.readVarint()+p.pos; const g=[];
- while(p.pos<e) g.push(p.readVarint()); return g; }
+    while (pbf.pos < end) {
+        const tag = pbf.readVarint() >> 3;
 
-function vectorTileFeatureToGeoJSON(f,l){ const ext=l.extent||4096;
- const geom=decodeGeometry(f,ext); return {id:f.id,type:'Feature',geometry:geom,tags:f.tags}; }
+        if (tag === 1) val.string = pbf.readString();
+        else if (tag === 2) val.float = pbf.readFloat();
+        else if (tag === 3) val.double = pbf.readDouble();
+        else if (tag === 4) val.int = pbf.readVarint();
+        else if (tag === 5) val.uint = pbf.readVarint();
+        else if (tag === 6) val.sint = pbf.readSVarint();
+        else if (tag === 7) val.bool = !!pbf.readVarint();
+    }
 
-function decodeGeometry(f,ext){ const c=f.geometry; let x=0,y=0; const lines=[]; let line=[]; let i=0;
- while(i<c.length){ const cmd=c[i++]&7; const cnt=c[i++]>>3;
-  if(cmd===1){ for(let j=0;j<cnt;j++){ x+=zigzag(c[i++]); y+=zigzag(c[i++]); if(line.length){lines.push(line); line=[];} line.push([x/ext,y/ext]); }}
-  else if(cmd===2){ for(let j=0;j<cnt;j++){ x+=zigzag(c[i++]); y+=zigzag(c[i++]); line.push([x/ext,y/ext]); }} }
- if(line.length) lines.push(line);
- return {type:'MultiLineString',coordinates:lines}; }
+    return val;
+}
 
-function zigzag(n){ return (n>>1)^(-(n&1)); }
+// ---------------------------------------
+// Feature & geometry parsing
+// ---------------------------------------
+function readFeature(tag, feature, pbf) {
+    if (tag === 1) feature.id = pbf.readVarint();
+    else if (tag === 2) feature.tags = readTags(feature.tags, pbf);
+    else if (tag === 3) feature.type = pbf.readVarint();
+    else if (tag === 4) feature.geometry = readGeometry(pbf);
+}
 
-class Pbf{ constructor(b){ this.buf=b; this.pos=0; this.length=b.length; }
- readFields(r,res){ while(this.pos<this.length){ const v=this.readVarint(); const t=v>>3; r(t,res,this);} return res; }
- readVarint(){ let v=0,sh=0,b; do{ b=this.buf[this.pos++]; v|=(b&0x7f)<<sh; sh+=7;}while(b>=0x80); return v; }
- readString(){ const len=this.readVarint(); const s=this.pos; this.pos+=len; return new TextDecoder().decode(this.buf.subarray(s,s+len)); }
- readFloat(){ const v=new DataView(this.buf.buffer).getFloat32(this.pos,true); this.pos+=4; return v; }
- readDouble(){ const v=new DataView(this.buf.buffer).getFloat64(this.pos,true); this.pos+=8; return v; }
- readMessage(r,res){ const e=this.readVarint()+this.pos; while(this.pos<e){ const t=this.readVarint()>>3; r(t,res,this);} return res; }
- readSVarint(){ return this.readVarint(); }
+function readTags(tags, pbf) {
+    const end = pbf.readVarint() + pbf.pos;
+
+    while (pbf.pos < end) {
+        const keyIndex = pbf.readVarint();
+        const valIndex = pbf.readVarint();
+        tags[keyIndex] = valIndex; // store raw indexes
+    }
+
+    return tags;
+}
+
+function readGeometry(pbf) {
+    const end = pbf.readVarint() + pbf.pos;
+    const commands = [];
+
+    while (pbf.pos < end) commands.push(pbf.readVarint());
+
+    return commands;
+}
+
+// ---------------------------------------
+// Geometry → GeoJSON polyline conversion
+// ---------------------------------------
+function mvtFeatureToGeoJSON(feature, layer) {
+    return {
+        id: feature.id,
+        tags: feature.tags,
+        geometry: parseGeometry(feature, layer.extent),
+        type: "Feature"
+    };
+}
+
+function parseGeometry(feature, extent) {
+    const geom = feature.geometry;
+    let x = 0, y = 0;
+    const lines = [];
+    let line = [];
+
+    let i = 0;
+    while (i < geom.length) {
+        const cmd = geom[i] & 7;
+        const count = geom[i++] >> 3;
+
+        if (cmd === 1) { // MoveTo
+            for (let c = 0; c < count; c++) {
+                x += zigzag(geom[i++]);
+                y += zigzag(geom[i++]);
+                if (line.length) {
+                    lines.push(line);
+                    line = [];
+                }
+                line.push([x / extent, y / extent]);
+            }
+        }
+        else if (cmd === 2) { // LineTo
+            for (let c = 0; c < count; c++) {
+                x += zigzag(geom[i++]);
+                y += zigzag(geom[i++]);
+                line.push([x / extent, y / extent]);
+            }
+        }
+        else if (cmd === 7) {
+            // ClosePath, ignore
+        }
+        else {
+            console.warn("Unknown geometry command:", cmd);
+        }
+    }
+
+    if (line.length) lines.push(line);
+
+    return {
+        type: "MultiLineString",
+        coordinates: lines
+    };
+}
+
+function zigzag(n) {
+    return (n >> 1) ^ (-(n & 1));
+}
+
+// ---------------------------------------
+// Minimal PBF reader
+// ---------------------------------------
+class Pbf {
+    constructor(buf) {
+        this.buf = buf;
+        this.pos = 0;
+        this.length = buf.length;
+    }
+
+    readFields(readField, result) {
+        while (this.pos < this.length) {
+            const val = this.readVarint();
+            const tag = val >> 3;
+            readField(tag, result, this);
+        }
+        return result;
+    }
+
+    readVarint() {
+        let val = 0, shift = 0, b;
+        do {
+            b = this.buf[this.pos++];
+            val |= (b & 0x7f) << shift;
+            shift += 7;
+        } while (b >= 0x80);
+        return val;
+    }
+
+    readString() {
+        const len = this.readVarint();
+        const start = this.pos;
+        this.pos += len;
+        return new TextDecoder().decode(this.buf.subarray(start, start + len));
+    }
+
+    readFloat() {
+        const v = new DataView(this.buf.buffer).getFloat32(this.pos, true);
+        this.pos += 4;
+        return v;
+    }
+
+    readDouble() {
+        const v = new DataView(this.buf.buffer).getFloat64(this.pos, true);
+        this.pos += 8;
+        return v;
+    }
+
+    readMessage(readField, result) {
+        const end = this.readVarint() + this.pos;
+        while (this.pos < end) {
+            const val = this.readVarint();
+            const tag = val >> 3;
+            readField(tag, result, this);
+        }
+        return result;
+    }
+
+    readSVarint() {
+        return this.readVarint();
+    }
 }
