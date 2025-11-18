@@ -5,25 +5,18 @@ import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
 
-// --- Working imports (ESM from esm.sh, CORS safe) ---
-import VectorTile from "https://esm.sh/@mapbox/vector-tile@1.3.1";
-import Pbf from "https://esm.sh/pbf@3.2.1";
-import { PMTiles, Protocol } from "https://esm.sh/pmtiles@2.9.0";
-
 // ------------------------------------------------------------
 // SETTINGS
 // ------------------------------------------------------------
-const Z = 14;
-const start = [6.5665, 53.2194]; // Groningen
+const start = [6.5665, 53.2194]; // Groningen center
 
-// ------------------------------------------------------------
-// PMTiles (GLOBAL ROADS)
-// ------------------------------------------------------------
-maplibregl.addProtocol("pmtiles", new Protocol());
-
-const PMTILES_URL = "https://pmtiles.io/pmtiles/osm.planet.pmtiles";
-
-const pmt = new PMTiles(PMTILES_URL);
+// Groningen bounding box for Overpass
+const BBOX = {
+    minLon: 6.50,
+    minLat: 53.15,
+    maxLon: 6.65,
+    maxLat: 53.25
+};
 
 // ------------------------------------------------------------
 // MAP
@@ -67,44 +60,45 @@ const terrainHelper = new TerrainHelper(map);
 const snapper = new RoadSnapper();
 
 // ------------------------------------------------------------
-// LOAD ROADS FROM PMTiles
+// LOAD ROADS FROM OVERPASS (Groningen only)
 // ------------------------------------------------------------
-async function loadRoadsAround(lon, lat) {
-    const t = lonLatToTile(lon, lat, Z);
-    const tx = Math.floor(t.x);
-    const ty = Math.floor(t.y);
+async function loadRoadsGroningen() {
+    console.log("Fetching Groningen road network…");
 
-    const all = [];
+    const query = `
+        [out:json][timeout:25];
+        way["highway"](${BBOX.minLat},${BBOX.minLon},${BBOX.maxLat},${BBOX.maxLon});
+        (._;>;);
+        out geom;
+    `;
 
-    for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
+    const url = "https://overpass-api.de/api/interpreter";
 
-            const tile = await pmt.getZxy(Z, tx + dx, ty + dy);
-            if (!tile || !tile.data) continue;
+    const response = await fetch(url, {
+        method: "POST",
+        body: query
+    });
 
-            const vt = new VectorTile(new Pbf(tile.data));
+    const data = await response.json();
 
-            const layer =
-                vt.layers["transportation"] ||
-                vt.layers["roads"] ||
-                null;
+    console.log("Overpass ways:", data.elements.length);
 
-            if (!layer) continue;
+    const roads = [];
 
-            for (let i = 0; i < layer.length; i++) {
-                const feat = layer.feature(i);
-                const geom = feat.loadGeometry();
+    for (const el of data.elements) {
+        if (el.type !== "way" || !el.geometry) continue;
 
-                for (const line of geom) {
-                    const pts = line.map(p => [p.x, p.y]);
-                    if (pts.length > 1) all.push(pts);
-                }
-            }
+        // Convert to lon/lat pairs
+        const line = el.geometry.map(pt => [pt.lon, pt.lat]);
+
+        if (line.length > 1) {
+            roads.push(line);
         }
     }
 
-    console.log("Loaded roads:", all.length);
-    snapper.setRoads(all);
+    console.log("Loaded Groningen roads:", roads.length);
+
+    snapper.setRoads(roads);
 }
 
 // ------------------------------------------------------------
@@ -118,10 +112,11 @@ map.on("idle", async () => {
     if (!threeLayer) {
         console.log("Map idle → initializing 3D layer");
 
-        await loadRoadsAround(start[0], start[1]);
+        await loadRoadsGroningen();
 
         threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
             console.log("Car loaded");
+
             car = new CarController(carModel, start, map, snapper);
             camController = new CameraController(threeLayer, car);
         });
