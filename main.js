@@ -10,28 +10,23 @@ import { TerrainHelper } from "./engine/terrain.js";
 // ------------------------------------------------------------
 // SETTINGS
 // ------------------------------------------------------------
-const Z = 14; // Good for free vector tiles
-const start = [6.5665, 53.2194]; // Groningen center
+const Z = 14; 
+const start = [6.5665, 53.2194]; // Groningen
 
 // ------------------------------------------------------------
-// MAP INITIALIZATION (NO API KEYS REQUIRED)
+// MAP INITIALIZATION
 // ------------------------------------------------------------
 const map = new maplibregl.Map({
     container: "map",
     style: {
         version: 8,
         sources: {
-            // Free OSM raster tiles
             raster: {
                 type: "raster",
-                tiles: [
-                    "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                ],
+                tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
                 tileSize: 256,
                 maxzoom: 19
             },
-
-            // Free AWS TERRARIUM global DEM
             terrain: {
                 type: "raster-dem",
                 tiles: [
@@ -42,14 +37,11 @@ const map = new maplibregl.Map({
                 maxzoom: 15
             }
         },
-
         layers: [
-            { id: "osm-layer", type: "raster", source: "raster" }
+            { id: "osm", type: "raster", source: "raster" }
         ],
-
         terrain: { source: "terrain", exaggeration: 1.0 }
     },
-
     center: start,
     zoom: 15,
     pitch: 60,
@@ -63,7 +55,7 @@ map.touchZoomRotate.enable();
 const terrainHelper = new TerrainHelper(map);
 
 // ------------------------------------------------------------
-// VECTOR TILE ROAD LOADING (geocode.earth — free, global)
+// GLOBAL FREE VECTOR TILES (Protomaps OVT)
 // ------------------------------------------------------------
 const snapper = new RoadSnapper();
 
@@ -77,9 +69,8 @@ async function loadRoadsAround(lon, lat) {
     for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
 
-            // FREE GLOBAL VECTOR TILES
             const url = tileURL(
-                "https://tileserver.geocode.earth/planet/{z}/{x}/{y}.mvt",
+                "https://tiles.protomaps.com/ogcapi/collections/pmtiles/tiles/{z}/{x}/{y}.mvt",
                 Z,
                 tx + dx,
                 ty + dy
@@ -108,10 +99,8 @@ map.on("idle", async () => {
     if (!threeLayer) {
         console.log("Map idle → initializing 3D layer");
 
-        // Load real road network
         await loadRoadsAround(start[0], start[1]);
 
-        // 3D custom layer
         threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
             console.log("Car model loaded");
 
@@ -120,6 +109,7 @@ map.on("idle", async () => {
         });
 
         map.addLayer(threeLayer);
+
         gameLoop();
     }
 });
