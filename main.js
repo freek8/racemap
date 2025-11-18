@@ -7,51 +7,47 @@ import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
 
-const STADIA_KEY = "d0582653-98b5-4c74-9480-a865138eb438";   // <--- paste your key here
-
-// Zoom level for vector tiles
-const Z = 14;
-
-// Start location (Groningen)
-const start = [6.5665, 53.2194];
+// ------------------------------------------------------------
+// MAP SETTINGS
+// ------------------------------------------------------------
+const Z = 14;                      // vector zoom level
+const start = [6.5665, 53.2194];   // Groningen center
 
 // ------------------------------------------------------------
-// MAP
+// MAP INITIALIZATION
 // ------------------------------------------------------------
 const map = new maplibregl.Map({
     container: "map",
     style: {
         version: 8,
         sources: {
-            // Raster background (Stadia Maps - OSM)
+            // Free OpenStreetMap raster tiles
             raster: {
                 type: "raster",
                 tiles: [
-                    `https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}@2x.jpg?api_key=${STADIA_KEY}`
+                    "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
                 ],
                 tileSize: 256,
-                maxzoom: 18
+                maxzoom: 19
             },
 
-            // Terrain DEM (Stadia)
+            // Global TERRARIUM DEM (works everywhere)
             terrain: {
                 type: "raster-dem",
                 tiles: [
-                    `https://tiles.stadiamaps.com/terrain-rgb/{z}/{x}/{y}.png?api_key=${STADIA_KEY}`
+                    "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
                 ],
                 tileSize: 256,
+                encoding: "terrarium",
                 maxzoom: 15
             }
         },
 
         layers: [
-            { id: "raster-layer", type: "raster", source: "raster" }
+            { id: "osm-base", type: "raster", source: "raster" }
         ],
 
-        terrain: {
-            source: "terrain",
-            exaggeration: 1.0
-        }
+        terrain: { source: "terrain", exaggeration: 1.0 }
     },
 
     center: start,
@@ -61,15 +57,21 @@ const map = new maplibregl.Map({
     antialias: true
 });
 
+// Enable gestures
 map.touchPitch.enable();
 map.touchZoomRotate.enable();
 
+// Terrain smoother
 const terrainHelper = new TerrainHelper(map);
 
 // ------------------------------------------------------------
-// LOAD VECTOR ROADS (Stadia Maps Vector Tiles)
+// ROAD LOADING — MapLibre FREE GLOBAL VECTOR TILES
 // ------------------------------------------------------------
 const snapper = new RoadSnapper();
+
+// This endpoint WORKS, contains "transportation" layer, and has no CORS issues.
+const VECTOR_TILE_URL =
+    "https://demotiles.maplibre.org/tiles/tiles/{z}/{x}/{y}.pbf";
 
 async function loadRoadsAround(lon, lat) {
     const t = lonLatToTile(lon, lat, Z);
@@ -81,12 +83,7 @@ async function loadRoadsAround(lon, lat) {
     for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
 
-            const url = tileURL(
-                `https://tiles.stadiamaps.com/data/vector/osm/{z}/{x}/{y}.pbf?api_key=${STADIA_KEY}`,
-                Z,
-                tx + dx,
-                ty + dy
-            );
+            const url = tileURL(VECTOR_TILE_URL, Z, tx + dx, ty + dy);
 
             const tile = await loadVectorTile(url);
             if (!tile) continue;
@@ -101,7 +98,7 @@ async function loadRoadsAround(lon, lat) {
 }
 
 // ------------------------------------------------------------
-// THREE + CAR + CAMERA INIT
+// THREE.JS LAYER + CAR + CAMERA
 // ------------------------------------------------------------
 let threeLayer;
 let car;
@@ -109,18 +106,21 @@ let camController;
 
 map.on("idle", async () => {
     if (!threeLayer) {
-        console.log("Map idle → loading roads & initializing 3D");
+        console.log("Map idle → initializing 3D layer");
 
+        // Load road network
         await loadRoadsAround(start[0], start[1]);
 
-        threeLayer = new ThreeTerrainLayer("./car.glb", (model) => {
+        // Add 3D layer with car model
+        threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
             console.log("Car model loaded");
 
-            car = new CarController(model, start, map, snapper);
+            car = new CarController(carModel, start, map, snapper);
             camController = new CameraController(threeLayer, car);
         });
 
         map.addLayer(threeLayer);
+
         gameLoop();
     }
 });
