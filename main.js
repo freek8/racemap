@@ -9,7 +9,7 @@ import { TerrainHelper } from "./engine/terrain.js";
 // ------------------------------------------------------------
 const start = [6.5665, 53.2194]; // Groningen center
 
-// Groningen bounding box
+// Groningen bounding box for Overpass API
 const BBOX = {
     minLon: 6.50,
     minLat: 53.15,
@@ -21,34 +21,40 @@ let initialized = false;
 const snapper = new RoadSnapper();
 
 // ------------------------------------------------------------
-// MAP
+// MAP SETUP WITH QUANTIZED-MESH TERRAIN
 // ------------------------------------------------------------
 const map = new maplibregl.Map({
     container: "map",
     style: {
         version: 8,
+
         sources: {
+            // OpenStreetMap raster tiles
             raster: {
                 type: "raster",
-                tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+                tiles: [
+                    "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+                ],
                 tileSize: 256,
                 maxzoom: 19
             },
 
-            // ⭐ GLOBAL TERRAIN DEM (MapTiler, working)
+            // ⭐ GLOBAL QUANTIZED MESH TERRAIN (no 400 errors)
             terrain: {
                 type: "raster-dem",
                 tiles: [
-                    "https://api.maptiler.com/tiles/terrain-rgb/{z}/{x}/{y}.png?key=84I0brm1Nz3hhuwn2JP4"
+                    "https://maps.tilehosting.com/data/terrain-quantized-mesh/{z}/{x}/{y}.terrain?key=WyA1G3oO8gjZtlmsFmJQ"
                 ],
                 tileSize: 256,
-                encoding: "mapbox",
-                maxzoom: 15
+                maxzoom: 14
             }
         },
+
         layers: [
             { id: "osm", type: "raster", source: "raster" }
         ],
+
+        // Enable terrain
         terrain: { source: "terrain", exaggeration: 1.0 }
     },
 
@@ -59,13 +65,14 @@ const map = new maplibregl.Map({
     antialias: true
 });
 
+// Enable gestures
 map.touchPitch.enable();
 map.touchZoomRotate.enable();
 
 const terrainHelper = new TerrainHelper(map);
 
 // ------------------------------------------------------------
-// Convert lon/lat → MapLibre world coordinates
+// Convert lon/lat → world x/y coordinates for snapping + 3D
 // ------------------------------------------------------------
 function worldFromLonLat(lon, lat) {
     const p = map.project([lon, lat]);
@@ -73,7 +80,7 @@ function worldFromLonLat(lon, lat) {
 }
 
 // ------------------------------------------------------------
-// LOAD ROADS FROM OVERPASS
+// LOAD ROADS FROM OVERPASS API
 // ------------------------------------------------------------
 async function loadRoadsGroningen() {
     console.log("Fetching Groningen road network…");
@@ -91,6 +98,7 @@ async function loadRoadsGroningen() {
     });
 
     const data = await response.json();
+
     console.log("Overpass ways:", data.elements.length);
 
     const roads = [];
@@ -98,8 +106,12 @@ async function loadRoadsGroningen() {
     for (const el of data.elements) {
         if (el.type !== "way" || !el.geometry) continue;
 
+        // Convert from lon/lat → map world x/y
         const pts = el.geometry.map(pt => worldFromLonLat(pt.lon, pt.lat));
-        if (pts.length > 1) roads.push(pts);
+
+        if (pts.length > 1) {
+            roads.push(pts);
+        }
     }
 
     console.log("Loaded Groningen roads:", roads.length);
@@ -108,12 +120,13 @@ async function loadRoadsGroningen() {
 }
 
 // ------------------------------------------------------------
-// 3D + CAR
+// 3D LAYER, CAR, CAMERA
 // ------------------------------------------------------------
 let threeLayer;
 let car;
 let camController;
 
+// Use "idle" to wait for map to fully load
 map.on("idle", async () => {
     if (initialized) return;
     initialized = true;
@@ -122,20 +135,26 @@ map.on("idle", async () => {
 
     await loadRoadsGroningen();
 
+    // Load car model inside ThreeTerrainLayer
     threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
         console.log("Car loaded");
 
+        // Create car controller
         car = new CarController(carModel, start, map, snapper);
+
+        // Create camera controller
         camController = new CameraController(threeLayer, car);
 
-        // Place the car on the nearest real road
+        // Snap car to nearest OSM road
         if (car.snapToNearestRoad) {
             car.snapToNearestRoad();
+            console.log("Car snapped to nearest road");
+        } else {
+            console.warn("car.snapToNearestRoad() is missing!");
         }
     });
 
     map.addLayer(threeLayer);
-
     gameLoop();
 });
 
