@@ -5,10 +5,10 @@ import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
 
-// --- PMTiles + VectorTile + PBF (CORS-SAFE CDN VERSIONS) ---
-import { PMTiles, Protocol } from "https://cdn.jsdelivr.net/npm/pmtiles@2.9.0/dist/index.js";
-import Pbf from "https://cdn.jsdelivr.net/npm/pbf@3.2.1/dist/pbf.js";
-import VectorTile from "https://cdn.jsdelivr.net/npm/@mapbox/vector-tile@1.3.1/dist/vector-tile.js";
+// --- Working imports (ESM from esm.sh, CORS safe) ---
+import VectorTile from "https://esm.sh/@mapbox/vector-tile@1.3.1";
+import Pbf from "https://esm.sh/pbf@3.2.1";
+import { PMTiles, Protocol } from "https://esm.sh/pmtiles@2.9.0";
 
 // ------------------------------------------------------------
 // SETTINGS
@@ -17,7 +17,7 @@ const Z = 14;
 const start = [6.5665, 53.2194]; // Groningen
 
 // ------------------------------------------------------------
-// PMTiles (GLOBAL ROADS, CDN HOSTED)
+// PMTiles (GLOBAL ROADS)
 // ------------------------------------------------------------
 maplibregl.addProtocol("pmtiles", new Protocol());
 
@@ -83,7 +83,6 @@ async function loadRoadsAround(lon, lat) {
 
             const vt = new VectorTile(new Pbf(tile.data));
 
-            // Prefer "transportation" layer; fallback to "roads"
             const layer =
                 vt.layers["transportation"] ||
                 vt.layers["roads"] ||
