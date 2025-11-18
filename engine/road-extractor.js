@@ -1,6 +1,6 @@
-// Extract drivable roads from OpenMapTiles / MapLibre demo tiles
+// Extract drivable roads from OpenFreeMap / OSM-Flex tiles
 
-// Allowed drivable road classes in OpenMapTiles schema
+// All drivable road types in free OSM vector tiles
 const DRIVABLE = new Set([
     "motorway",
     "trunk",
@@ -8,20 +8,19 @@ const DRIVABLE = new Set([
     "secondary",
     "tertiary",
     "residential",
+    "unclassified",
     "service",
     "living_street",
-    "unclassified",
-    "road",          // fallback
-    "minor",         // fallback
-    "track"          // sometimes included
+    "road",
+    "minor",
+    "track"
 ]);
 
-// Exclude non-car ways
+// Exclude on-foot layers
 const EXCLUDE = new Set([
-    "path",
     "footway",
+    "path",
     "cycleway",
-    "bridleway",
     "steps",
     "pedestrian"
 ]);
@@ -32,7 +31,13 @@ export function extractRoads(tile) {
         return [];
     }
 
-    const layer = tile.layers.transportation;
+    // Correct layer names for OpenFreeMap vector tiles:
+    const layer =
+        tile.layers.transportation ||  // MapTiler/OpenMapTiles
+        tile.layers.roads ||           // OpenFreeMap (OSM Flex)
+        tile.layers.highway ||         // Some OSM free servers
+        null;
+
     if (!layer || !layer.features) {
         console.warn("No transportation layer found");
         return [];
@@ -41,13 +46,11 @@ export function extractRoads(tile) {
     const roads = [];
 
     for (const f of layer.features) {
-        const type = getRoadType(f, layer);
+        const type = getRoadType(f);
 
         if (!type) continue;
         if (EXCLUDE.has(type)) continue;
-
-        // Accept if directly drivable OR "minor"/"road"
-        if (!DRIVABLE.has(type) && type !== "road" && type !== "minor") continue;
+        if (!DRIVABLE.has(type)) continue;
 
         if (!f.geometry || !f.geometry.coordinates) continue;
 
@@ -61,52 +64,19 @@ export function extractRoads(tile) {
     return roads;
 }
 
-// ---------------------------------------
-// Extract road type from tags
-// OpenMapTiles transport schema:
-//   class = 'motorway' | 'primary' | ...
-//   subclass = 'service' | 'living_street' | ...
-// ---------------------------------------
-function getRoadType(feature, layer) {
+function getRoadType(feature) {
     try {
-        const { tags } = feature;
-        const { keys = [], values = [] } = layer;
+        const props = feature.properties || {};
+        const type =
+            props.class ||
+            props.highway ||
+            props.road ||
+            props.type ||
+            null;
 
-        let classType = null;
-        let subclassType = null;
-
-        for (const keyIndexStr in tags) {
-            const keyIndex = Number(keyIndexStr);
-            const valIndex = tags[keyIndexStr];
-
-            const key = keys[keyIndex];
-            const valObj = values[valIndex];
-
-            if (!key || !valObj) continue;
-
-            const value =
-                valObj.string ??
-                valObj.value ??
-                valObj.name ??
-                valObj.label ??
-                null;
-
-            if (!value) continue;
-
-            if (key === "class") classType = value;
-            if (key === "subclass") subclassType = value;
-        }
-
-        // Prefer exact class
-        if (classType) return classType;
-
-        // Fallback to subclass
-        if (subclassType) return subclassType;
-
-        return null;
-
+        return type;
     } catch (err) {
-        console.warn("Road type decode error:", err);
+        console.warn("Failed to get road type:", err);
         return null;
     }
 }
