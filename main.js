@@ -7,20 +7,10 @@ import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
 
-// -------------------------------------------
-// SETTINGS
-// -------------------------------------------
-
-// FREE TILE ZOOM LIMITS:
-// • Vector (roads): up to Z=14 reliably
-// • Terrain: also Z=14
-// • Raster: unlimited
 const Z = 14;
 const start = [6.5665, 53.2194]; // Groningen
 
-// -------------------------------------------
-// MAP INITIALIZATION (FREE, NO API KEY)
-// -------------------------------------------
+// FREE MAPLAYER (NO API KEY)
 const map = new maplibregl.Map({
     container: "map",
     style: {
@@ -31,8 +21,7 @@ const map = new maplibregl.Map({
                 tiles: [
                     "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
                 ],
-                tileSize: 256,
-                maxzoom: 19
+                tileSize: 256
             },
             terrain: {
                 type: "raster-dem",
@@ -58,16 +47,12 @@ const map = new maplibregl.Map({
 map.touchPitch.enable();
 map.touchZoomRotate.enable();
 
-// -------------------------------------------
-// TERRAIN SMOOTHER
-// -------------------------------------------
 const terrainHelper = new TerrainHelper(map);
-
-// -------------------------------------------
-// ROAD LOADING (FREE VECTOR TILES)
-// -------------------------------------------
 const snapper = new RoadSnapper();
 
+// -------------------------------------------
+// FREE VECTOR TILES (REAL WORKING SERVER)
+// -------------------------------------------
 async function loadRoadsAround(lon, lat) {
     const t = lonLatToTile(lon, lat, Z);
     const tx = Math.floor(t.x);
@@ -77,10 +62,11 @@ async function loadRoadsAround(lon, lat) {
 
     for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
-
             const url = tileURL(
-                "https://demotiles.maplibre.org/tiles/{z}/{x}/{y}.pbf",
-                Z, tx + dx, ty + dy
+                "https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf",
+                Z,
+                tx + dx,
+                ty + dy
             );
 
             const tile = await loadVectorTile(url);
@@ -96,21 +82,18 @@ async function loadRoadsAround(lon, lat) {
 }
 
 // -------------------------------------------
-// THREE.JS LAYER + CAR + CAMERA
+// THREE + CAR
 // -------------------------------------------
 let threeLayer;
 let car;
 let camController;
 
-// Use `idle` to wait for full initialization
 map.on("idle", async () => {
     if (!threeLayer) {
         console.log("Map idle → initializing 3D layer");
 
-        // Load free road data
         await loadRoadsAround(start[0], start[1]);
 
-        // Load 3D car model
         threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
             console.log("Car model loaded");
 
@@ -123,14 +106,9 @@ map.on("idle", async () => {
     }
 });
 
-// -------------------------------------------
-// GAME LOOP
-// -------------------------------------------
 function gameLoop() {
     requestAnimationFrame(gameLoop);
-
     if (!car || snapper.roads.length === 0) return;
-
     car.update();
     camController.update();
 }
