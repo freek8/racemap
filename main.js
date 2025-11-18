@@ -11,9 +11,8 @@ import { TerrainHelper } from "./engine/terrain.js";
 // SETTINGS
 // ------------------------------------------------------------
 
-// FREE TILE ZOOM LIMITS:
 // Vector tiles: stable up to Z=14
-// Terrain tiles: stable up to Z=14
+// Terrain tiles: terrarium supports up to Z=15
 // Raster tiles: up to Z=19
 const Z = 14;
 
@@ -21,13 +20,14 @@ const Z = 14;
 const start = [6.5665, 53.2194];
 
 // ------------------------------------------------------------
-// MAP INITIALIZATION (FREE, NO API KEY REQUIRED)
+// MAP INITIALIZATION (FREE, GLOBAL, NO API KEY)
 // ------------------------------------------------------------
 const map = new maplibregl.Map({
     container: "map",
     style: {
         version: 8,
         sources: {
+            // Free OSM raster
             raster: {
                 type: "raster",
                 tiles: [
@@ -36,20 +36,26 @@ const map = new maplibregl.Map({
                 tileSize: 256,
                 maxzoom: 19
             },
+
+            // Free global TERRARIUM DEM (AWS)
             terrain: {
                 type: "raster-dem",
                 tiles: [
-                    "https://demotiles.maplibre.org/terrain-tiles/{z}/{x}/{y}.png"
+                    "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
                 ],
                 tileSize: 256,
-                maxzoom: 14
+                maxzoom: 15,
+                encoding: "terrarium"
             }
         },
+
         layers: [
             { id: "osm-layer", type: "raster", source: "raster" }
         ],
+
         terrain: { source: "terrain", exaggeration: 1.0 }
     },
+
     center: start,
     zoom: 15,
     pitch: 60,
@@ -60,11 +66,11 @@ const map = new maplibregl.Map({
 map.touchPitch.enable();
 map.touchZoomRotate.enable();
 
-// Terrain smoother (fixes DEM jitter)
+// Terrain smoother
 const terrainHelper = new TerrainHelper(map);
 
 // ------------------------------------------------------------
-// VECTOR TILE ROAD LOADING (FREE: OpenFreeMap)
+// FREE VECTOR TILE ROAD LOADING (OpenFreeMap)
 // ------------------------------------------------------------
 const snapper = new RoadSnapper();
 
@@ -77,8 +83,8 @@ async function loadRoadsAround(lon, lat) {
 
     for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
-            
-            // NEW FREE VECTOR TILE SERVER (full OSM)
+
+            // This is the correct FREE vector tile server
             const url = tileURL(
                 "https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf",
                 Z,
@@ -109,10 +115,10 @@ map.on("idle", async () => {
     if (!threeLayer) {
         console.log("Map idle → initializing 3D layer");
 
-        // Load the roads (requires FREE vector tiles)
+        // Load the roads
         await loadRoadsAround(start[0], start[1]);
 
-        // Add the 3D Three.js layer
+        // 3D custom layer
         threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
             console.log("Car model loaded");
 
