@@ -21,7 +21,8 @@ const start = [6.5665, 53.2194]; // Groningen
 // ------------------------------------------------------------
 maplibregl.addProtocol("pmtiles", new Protocol());
 
-const PMTILES_URL = "https://pmtiles.io/pmtiles/osm/planet-roads.pmtiles";
+const PMTILES_URL = "https://pmtiles.io/pmtiles/osm.planet.pmtiles";
+
 const pmt = new PMTiles(PMTILES_URL);
 
 // ------------------------------------------------------------
