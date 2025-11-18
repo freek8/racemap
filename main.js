@@ -10,22 +10,18 @@ import { TerrainHelper } from "./engine/terrain.js";
 // ------------------------------------------------------------
 // SETTINGS
 // ------------------------------------------------------------
-
-// Global reliable zoom range:
-const Z = 14;
-
-// Start in Groningen center
-const start = [6.5665, 53.2194];
+const Z = 14; // Good for free vector tiles
+const start = [6.5665, 53.2194]; // Groningen center
 
 // ------------------------------------------------------------
-// MAP INITIALIZATION (FREE, GLOBAL, NO LOGIN)
+// MAP INITIALIZATION (NO API KEYS REQUIRED)
 // ------------------------------------------------------------
 const map = new maplibregl.Map({
     container: "map",
     style: {
         version: 8,
         sources: {
-            // Free OSM raster layer
+            // Free OSM raster tiles
             raster: {
                 type: "raster",
                 tiles: [
@@ -35,7 +31,7 @@ const map = new maplibregl.Map({
                 maxzoom: 19
             },
 
-            // Free global TERRARIUM DEM (AWS)
+            // Free AWS TERRARIUM global DEM
             terrain: {
                 type: "raster-dem",
                 tiles: [
@@ -51,7 +47,6 @@ const map = new maplibregl.Map({
             { id: "osm-layer", type: "raster", source: "raster" }
         ],
 
-        // Enable terrain
         terrain: { source: "terrain", exaggeration: 1.0 }
     },
 
@@ -62,19 +57,15 @@ const map = new maplibregl.Map({
     antialias: true
 });
 
-// Enable touch controls
 map.touchPitch.enable();
 map.touchZoomRotate.enable();
 
 const terrainHelper = new TerrainHelper(map);
 
 // ------------------------------------------------------------
-// ROAD LOADING via Nextzen (FREE GLOBAL VECTOR TILES)
+// VECTOR TILE ROAD LOADING (geocode.earth — free, global)
 // ------------------------------------------------------------
 const snapper = new RoadSnapper();
-
-// Nextzen Open Source API key (free)
-const NEXTZEN_KEY = "mapzen-2YqfP2Y";
 
 async function loadRoadsAround(lon, lat) {
     const t = lonLatToTile(lon, lat, Z);
@@ -86,8 +77,9 @@ async function loadRoadsAround(lon, lat) {
     for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
 
+            // FREE GLOBAL VECTOR TILES
             const url = tileURL(
-                `https://tile.nextzen.org/tilezen/vector/v1/256/all/{z}/{x}/{y}.mvt?api_key=${NEXTZEN_KEY}`,
+                "https://tileserver.geocode.earth/planet/{z}/{x}/{y}.mvt",
                 Z,
                 tx + dx,
                 ty + dy
@@ -116,10 +108,10 @@ map.on("idle", async () => {
     if (!threeLayer) {
         console.log("Map idle → initializing 3D layer");
 
-        // Load road network (Nextzen)
+        // Load real road network
         await loadRoadsAround(start[0], start[1]);
 
-        // Add the Three.js layer
+        // 3D custom layer
         threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
             console.log("Car model loaded");
 
@@ -128,7 +120,6 @@ map.on("idle", async () => {
         });
 
         map.addLayer(threeLayer);
-
         gameLoop();
     }
 });
