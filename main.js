@@ -5,15 +5,19 @@ import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
 
-import { PMTiles, Protocol } from "https://unpkg.com/pmtiles@2.9.0/dist/index.js";
-import Pbf from "https://unpkg.com/pbf@3.2.1/dist/pbf.js";
-import VectorTile from "https://unpkg.com/@mapbox/vector-tile@1.3.1/dist/vector-tile.js";
+// --- PMTiles + VectorTile + PBF (CORS-SAFE CDN VERSIONS) ---
+import { PMTiles, Protocol } from "https://cdn.jsdelivr.net/npm/pmtiles@2.9.0/dist/index.js";
+import Pbf from "https://cdn.jsdelivr.net/npm/pbf@3.2.1/dist/pbf.js";
+import VectorTile from "https://cdn.jsdelivr.net/npm/@mapbox/vector-tile@1.3.1/dist/vector-tile.js";
 
+// ------------------------------------------------------------
+// SETTINGS
+// ------------------------------------------------------------
 const Z = 14;
 const start = [6.5665, 53.2194]; // Groningen
 
 // ------------------------------------------------------------
-// PMTiles (CDN-hosted global roads)
+// PMTiles (GLOBAL ROADS, CDN HOSTED)
 // ------------------------------------------------------------
 maplibregl.addProtocol("pmtiles", new Protocol());
 
@@ -78,12 +82,19 @@ async function loadRoadsAround(lon, lat) {
             if (!tile || !tile.data) continue;
 
             const vt = new VectorTile(new Pbf(tile.data));
-            const layer = vt.layers["transportation"] || vt.layers["roads"];
+
+            // Prefer "transportation" layer; fallback to "roads"
+            const layer =
+                vt.layers["transportation"] ||
+                vt.layers["roads"] ||
+                null;
+
             if (!layer) continue;
 
             for (let i = 0; i < layer.length; i++) {
                 const feat = layer.feature(i);
                 const geom = feat.loadGeometry();
+
                 for (const line of geom) {
                     const pts = line.map(p => [p.x, p.y]);
                     if (pts.length > 1) all.push(pts);
@@ -105,6 +116,8 @@ let camController;
 
 map.on("idle", async () => {
     if (!threeLayer) {
+        console.log("Map idle → initializing 3D layer");
+
         await loadRoadsAround(start[0], start[1]);
 
         threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
@@ -123,7 +136,9 @@ map.on("idle", async () => {
 // ------------------------------------------------------------
 function gameLoop() {
     requestAnimationFrame(gameLoop);
+
     if (!car || snapper.roads.length === 0) return;
+
     car.update();
     camController.update();
 }
