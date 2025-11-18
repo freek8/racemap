@@ -1,6 +1,5 @@
 import { ThreeTerrainLayer } from "./engine/three-layer.js";
 import { RoadSnapper } from "./engine/road-snap.js";
-import { lonLatToTile } from "./engine/coordinate-utils.js";
 import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
@@ -10,7 +9,7 @@ import { TerrainHelper } from "./engine/terrain.js";
 // ------------------------------------------------------------
 const start = [6.5665, 53.2194]; // Groningen center
 
-// Groningen boundary for Overpass (small but dense)
+// Groningen bounding box
 const BBOX = {
     minLon: 6.50,
     minLat: 53.15,
@@ -29,7 +28,6 @@ const map = new maplibregl.Map({
     style: {
         version: 8,
         sources: {
-            // OSM raster tiles
             raster: {
                 type: "raster",
                 tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
@@ -37,14 +35,15 @@ const map = new maplibregl.Map({
                 maxzoom: 19
             },
 
-            // GLOBAL DEM (THIS FIXES CAR NOT APPEARING)
+            // ⭐ GLOBAL TERRAIN DEM (MapTiler, working)
             terrain: {
                 type: "raster-dem",
                 tiles: [
-                    "https://demotiles.maplibre.org/terrain-tiles/{z}/{x}/{y}.png"
+                    "https://api.maptiler.com/tiles/terrain-rgb/{z}/{x}/{y}.png?key=84I0brm1Nz3hhuwn2JP4"
                 ],
                 tileSize: 256,
-                maxzoom: 14
+                encoding: "mapbox",
+                maxzoom: 15
             }
         },
         layers: [
@@ -66,7 +65,7 @@ map.touchZoomRotate.enable();
 const terrainHelper = new TerrainHelper(map);
 
 // ------------------------------------------------------------
-// UTIL: Convert lon/lat → MapLibre world coordinates
+// Convert lon/lat → MapLibre world coordinates
 // ------------------------------------------------------------
 function worldFromLonLat(lon, lat) {
     const p = map.project([lon, lat]);
@@ -92,7 +91,6 @@ async function loadRoadsGroningen() {
     });
 
     const data = await response.json();
-
     console.log("Overpass ways:", data.elements.length);
 
     const roads = [];
@@ -100,9 +98,8 @@ async function loadRoadsGroningen() {
     for (const el of data.elements) {
         if (el.type !== "way" || !el.geometry) continue;
 
-        // Convert to projected coordinates
-        const worldLine = el.geometry.map(pt => worldFromLonLat(pt.lon, pt.lat));
-        if (worldLine.length > 1) roads.push(worldLine);
+        const pts = el.geometry.map(pt => worldFromLonLat(pt.lon, pt.lat));
+        if (pts.length > 1) roads.push(pts);
     }
 
     console.log("Loaded Groningen roads:", roads.length);
@@ -131,10 +128,10 @@ map.on("idle", async () => {
         car = new CarController(carModel, start, map, snapper);
         camController = new CameraController(threeLayer, car);
 
-        // Spawn car ON nearest road
-        car.snapToNearestRoad();
-
-        console.log("Car placed on road.");
+        // Place the car on the nearest real road
+        if (car.snapToNearestRoad) {
+            car.snapToNearestRoad();
+        }
     });
 
     map.addLayer(threeLayer);
