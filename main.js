@@ -7,7 +7,7 @@ import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
 
-const STADIA_KEY = "YOUR_STADIA_API_KEY_HERE";   // <--- paste your key here
+const STADIA_KEY = "d0582653-98b5-4c74-9480-a865138eb438";   // <--- paste your key here
 
 // Zoom level for vector tiles
 const Z = 14;
