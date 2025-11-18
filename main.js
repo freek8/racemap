@@ -1,27 +1,28 @@
 import { ThreeTerrainLayer } from "./engine/three-layer.js";
-import { extractRoads } from "./engine/road-extractor.js";
 import { RoadSnapper } from "./engine/road-snap.js";
 import { lonLatToTile } from "./engine/coordinate-utils.js";
 import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
+
 import { PMTiles, Protocol } from "https://unpkg.com/pmtiles@2.9.0/dist/index.js";
+import Pbf from "https://unpkg.com/pbf@3.2.1/dist/pbf.js";
+import VectorTile from "https://unpkg.com/@mapbox/vector-tile@1.3.1/dist/vector-tile.js";
 
 const Z = 14;
 const start = [6.5665, 53.2194]; // Groningen
 
-// --------------------------------------------------
-// PMTiles
-// --------------------------------------------------
+// ------------------------------------------------------------
+// PMTiles (CDN-hosted global roads)
+// ------------------------------------------------------------
 maplibregl.addProtocol("pmtiles", new Protocol());
 
-// Your uploaded PMTiles file:
-const PMTILES_URL = "https://mapracer.netlify.app/netherlands-roads.pmtiles";
+const PMTILES_URL = "https://pmtiles.io/pmtiles/osm/planet-roads.pmtiles";
 const pmt = new PMTiles(PMTILES_URL);
 
-// --------------------------------------------------
+// ------------------------------------------------------------
 // MAP
-// --------------------------------------------------
+// ------------------------------------------------------------
 const map = new maplibregl.Map({
     container: "map",
     style: {
@@ -29,9 +30,7 @@ const map = new maplibregl.Map({
         sources: {
             raster: {
                 type: "raster",
-                tiles: [
-                    "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                ],
+                tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
                 tileSize: 256,
                 maxzoom: 19
             },
@@ -45,7 +44,7 @@ const map = new maplibregl.Map({
             }
         },
         layers: [
-            { id: "raster-base", type: "raster", source: "raster" }
+            { id: "osm", type: "raster", source: "raster" }
         ],
         terrain: { source: "terrain", exaggeration: 1.0 }
     },
@@ -62,9 +61,9 @@ map.touchZoomRotate.enable();
 const terrainHelper = new TerrainHelper(map);
 const snapper = new RoadSnapper();
 
-// --------------------------------------------------
+// ------------------------------------------------------------
 // LOAD ROADS FROM PMTiles
-// --------------------------------------------------
+// ------------------------------------------------------------
 async function loadRoadsAround(lon, lat) {
     const t = lonLatToTile(lon, lat, Z);
     const tx = Math.floor(t.x);
@@ -79,14 +78,15 @@ async function loadRoadsAround(lon, lat) {
             if (!tile || !tile.data) continue;
 
             const vt = new VectorTile(new Pbf(tile.data));
+            const layer = vt.layers["transportation"] || vt.layers["roads"];
+            if (!layer) continue;
 
-            if (vt.layers["roads"]) {
-                for (let i = 0; i < vt.layers["roads"].length; i++) {
-                    const feat = vt.layers["roads"].feature(i);
-                    const geom = feat.loadGeometry();
-                    if (geom && geom.length > 0) {
-                        all.push(...geom.map(g => g.map(p => [p.x, p.y])));
-                    }
+            for (let i = 0; i < layer.length; i++) {
+                const feat = layer.feature(i);
+                const geom = feat.loadGeometry();
+                for (const line of geom) {
+                    const pts = line.map(p => [p.x, p.y]);
+                    if (pts.length > 1) all.push(pts);
                 }
             }
         }
@@ -96,9 +96,9 @@ async function loadRoadsAround(lon, lat) {
     snapper.setRoads(all);
 }
 
-// --------------------------------------------------
-// THREE + CAR
-// --------------------------------------------------
+// ------------------------------------------------------------
+// 3D + CAR
+// ------------------------------------------------------------
 let threeLayer;
 let car;
 let camController;
@@ -118,9 +118,9 @@ map.on("idle", async () => {
     }
 });
 
-// --------------------------------------------------
+// ------------------------------------------------------------
 // GAME LOOP
-// --------------------------------------------------
+// ------------------------------------------------------------
 function gameLoop() {
     requestAnimationFrame(gameLoop);
     if (!car || snapper.roads.length === 0) return;
