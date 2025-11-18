@@ -7,21 +7,14 @@ import { CarController } from "./engine/car-controller.js";
 import { CameraController } from "./engine/camera-controller.js";
 import { TerrainHelper } from "./engine/terrain.js";
 
-// ------------------------------------------------------------
-// MAP SETTINGS
-// ------------------------------------------------------------
-const Z = 14;                      // vector zoom level
-const start = [6.5665, 53.2194];   // Groningen center
+const Z = 14;
+const start = [6.5665, 53.2194]; // Groningen
 
-// ------------------------------------------------------------
-// MAP INITIALIZATION
-// ------------------------------------------------------------
 const map = new maplibregl.Map({
     container: "map",
     style: {
         version: 8,
         sources: {
-            // Free OpenStreetMap raster tiles
             raster: {
                 type: "raster",
                 tiles: [
@@ -30,8 +23,6 @@ const map = new maplibregl.Map({
                 tileSize: 256,
                 maxzoom: 19
             },
-
-            // Global TERRARIUM DEM (works everywhere)
             terrain: {
                 type: "raster-dem",
                 tiles: [
@@ -42,14 +33,11 @@ const map = new maplibregl.Map({
                 maxzoom: 15
             }
         },
-
         layers: [
-            { id: "osm-base", type: "raster", source: "raster" }
+            { id: "osm-layer", type: "raster", source: "raster" }
         ],
-
         terrain: { source: "terrain", exaggeration: 1.0 }
     },
-
     center: start,
     zoom: 15,
     pitch: 60,
@@ -57,21 +45,14 @@ const map = new maplibregl.Map({
     antialias: true
 });
 
-// Enable gestures
 map.touchPitch.enable();
 map.touchZoomRotate.enable();
 
-// Terrain smoother
 const terrainHelper = new TerrainHelper(map);
-
-// ------------------------------------------------------------
-// ROAD LOADING — MapLibre FREE GLOBAL VECTOR TILES
-// ------------------------------------------------------------
 const snapper = new RoadSnapper();
 
-// This endpoint WORKS, contains "transportation" layer, and has no CORS issues.
 const VECTOR_TILE_URL =
-    "https://demotiles.maplibre.org/tiles/tiles/{z}/{x}/{y}.pbf";
+    "https://openmaptiles.github.io/tiles/{z}/{x}/{y}.pbf";
 
 async function loadRoadsAround(lon, lat) {
     const t = lonLatToTile(lon, lat, Z);
@@ -97,9 +78,6 @@ async function loadRoadsAround(lon, lat) {
     snapper.setRoads(all);
 }
 
-// ------------------------------------------------------------
-// THREE.JS LAYER + CAR + CAMERA
-// ------------------------------------------------------------
 let threeLayer;
 let car;
 let camController;
@@ -108,13 +86,10 @@ map.on("idle", async () => {
     if (!threeLayer) {
         console.log("Map idle → initializing 3D layer");
 
-        // Load road network
         await loadRoadsAround(start[0], start[1]);
 
-        // Add 3D layer with car model
         threeLayer = new ThreeTerrainLayer("./car.glb", (carModel) => {
             console.log("Car model loaded");
-
             car = new CarController(carModel, start, map, snapper);
             camController = new CameraController(threeLayer, car);
         });
@@ -125,9 +100,6 @@ map.on("idle", async () => {
     }
 });
 
-// ------------------------------------------------------------
-// GAME LOOP
-// ------------------------------------------------------------
 function gameLoop() {
     requestAnimationFrame(gameLoop);
 
